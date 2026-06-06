@@ -2,8 +2,69 @@ import streamlit as st
 import pandas as pd
 import json
 
+def parse_level_hierarchy(df, cols, level_cols):
+    roots = []
+    last_nodes = {}
+    
+    for idx, row in df.iterrows():
+        active_level = None
+        node_name = None
+        
+        # Find which level this row corresponds to
+        for i, c in enumerate(level_cols):
+            val = row[c]
+            if pd.notna(val) and str(val).strip() != "":
+                active_level = i + 1
+                node_name = str(val).strip()
+                break
+                
+        if active_level is None:
+            continue
+            
+        c_idx = cols.index(level_cols[active_level-1])
+        node_type = ""
+        # The next column is usually "Product type"
+        if c_idx + 1 < len(cols):
+            type_val = row.iloc[c_idx+1]
+            if pd.notna(type_val) and str(type_val).strip() != "":
+                node_type = str(type_val).strip()
+                
+        # Look for an explicit ID column
+        id_col = next((c for c in cols if str(c).lower().strip() == 'id'), None)
+        node_id = row[id_col] if id_col else None
+        if pd.isna(node_id) or str(node_id).strip() == "":
+            node_id = None
+        else:
+            node_id = str(node_id).strip()
+                
+        node = {
+            "Id": node_id,
+            "productName": node_name,
+            "productType": node_type,
+            "children": []
+        }
+        
+        if active_level == 1:
+            roots.append(node)
+        else:
+            parent_level = active_level - 1
+            if parent_level in last_nodes:
+                last_nodes[parent_level]["children"].append(node)
+            else:
+                # If there's missing indentation, treat as root to avoid dropping
+                roots.append(node)
+                
+        last_nodes[active_level] = node
+        
+    return roots
+
 def build_tree(df):
     cols = [str(c) for c in df.columns]
+    
+    # Check if this is a "Level" based hierarchy file
+    level_cols = [c for c in cols if 'level' in c.lower()]
+    if len(level_cols) >= 2:
+        return parse_level_hierarchy(df, cols, level_cols)
     
     # Helper to find columns by keywords
     def find_col(keywords):
@@ -97,29 +158,37 @@ uploaded_files = st.file_uploader("Choose Excel files", type=["xlsx", "xls"], ac
 
 if uploaded_files:
     try:
-        # Read all Excel files and concatenate them
-        dfs = []
-        for file in uploaded_files:
-            dfs.append(pd.read_excel(file))
-            
-        df = pd.concat(dfs, ignore_index=True)
-        # Drop any completely blank rows and reset the index
-        df.dropna(how='all', inplace=True)
-        df.reset_index(drop=True, inplace=True)
+        all_roots = []
+        all_dfs = []
         
-        st.write("### Data Preview")
-        st.dataframe(df, use_container_width=True)
+        for file in uploaded_files:
+            df = pd.read_excel(file)
+            df.dropna(how='all', inplace=True)
+            df.reset_index(drop=True, inplace=True)
+            all_dfs.append(df)
+            
+            # Build the tree for this specific file
+            tree_data = build_tree(df)
+            
+            # Combine roots
+            if isinstance(tree_data, list):
+                all_roots.extend(tree_data)
+            else:
+                all_roots.append(tree_data)
+                
+        # For the preview, we can concat all dfs (it might have lots of NaNs if formats differ, but it's just a preview)
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        
+        st.write("### Combined Data Preview")
+        st.dataframe(combined_df, use_container_width=True)
         
         beautify = st.checkbox("Beautify JSON output", value=True)
         
-        # Build the hierarchical tree automatically
-        tree_data = build_tree(df)
-        
-        # If there's only one root, output it directly as an object
-        if isinstance(tree_data, list) and len(tree_data) == 1:
-            final_data = tree_data[0]
+        # If there's only one root overall, we might format it as an object
+        if len(all_roots) == 1:
+            final_data = all_roots[0]
         else:
-            final_data = tree_data
+            final_data = all_roots
             
         if beautify:
             json_str = json.dumps(final_data, indent=4, default=str)
@@ -129,14 +198,12 @@ if uploaded_files:
         st.write("### Extracted JSON")
         with st.container(height=500):
             st.code(json_str, language="json")
+            
         # Generate an Excel file containing the hierarchical JSONs
         import io
         output_rows = []
         
-        # Ensure roots is a list
-        roots = tree_data if isinstance(tree_data, list) else [tree_data]
-        
-        for root in roots:
+        for root in all_roots:
             output_rows.append({
                 "Product Name": root.get("productName", ""),
                 "Id": root.get("Id", ""),

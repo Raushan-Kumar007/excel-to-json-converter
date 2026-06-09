@@ -21,14 +21,6 @@ def parse_level_hierarchy(df, cols, level_cols):
         if active_level is None:
             continue
             
-        c_idx = cols.index(level_cols[active_level-1])
-        node_type = ""
-        # The next column is usually "Product type"
-        if c_idx + 1 < len(cols):
-            type_val = row.iloc[c_idx+1]
-            if pd.notna(type_val) and str(type_val).strip() != "":
-                node_type = str(type_val).strip()
-                
         # Look for an explicit ID column
         id_col = next((c for c in cols if str(c).lower().strip() == 'id'), None)
         node_id = row[id_col] if id_col else None
@@ -40,7 +32,6 @@ def parse_level_hierarchy(df, cols, level_cols):
         node = {
             "Id": node_id,
             "productName": node_name,
-            "productType": node_type,
             "children": []
         }
         
@@ -49,7 +40,8 @@ def parse_level_hierarchy(df, cols, level_cols):
         else:
             parent_level = active_level - 1
             if parent_level in last_nodes:
-                last_nodes[parent_level]["children"].append(node)
+                parent_node = last_nodes[parent_level]
+                parent_node["children"].append(node)
             else:
                 # If there's missing indentation, treat as root to avoid dropping
                 roots.append(node)
@@ -102,9 +94,11 @@ def build_tree(df):
             # Link child to parent
             if pid is not None and cid is not None:
                 child_node = nodes[cid]
+                parent_node = nodes[pid]
+                
                 # Avoid duplicates
-                if child_node not in nodes[pid]['children']:
-                    nodes[pid]['children'].append(child_node)
+                if child_node not in parent_node['children']:
+                    parent_node['children'].append(child_node)
                 child_ids.add(cid)
                 
         # Roots are nodes that are never listed as children
@@ -145,7 +139,8 @@ def build_tree(df):
             if pid is None or pid not in nodes or pid == node_id:
                 roots.append(node)
             else:
-                nodes[pid]['children'].append(node)
+                parent_node = nodes[pid]
+                parent_node['children'].append(node)
                 
         return roots
 
@@ -203,11 +198,29 @@ if uploaded_files:
         import io
         output_rows = []
         
-        for root in all_roots:
+        def flatten_nodes_with_level(node_list, current_level=1):
+            flat = []
+            for n in node_list:
+                flat.append((n, current_level))
+                if n.get("children"):
+                    flat.extend(flatten_nodes_with_level(n["children"], current_level + 1))
+            return flat
+
+        all_flat_nodes_with_level = flatten_nodes_with_level(all_roots)
+        
+        for node, level in all_flat_nodes_with_level:
+            # Skip products that have no children
+            if not node.get("children"):
+                continue
+                
+            # Only include Level 1 and Level 2 products
+            if level not in [1, 2]:
+                continue
+                
             output_rows.append({
-                "Product Name": root.get("productName", ""),
-                "Id": root.get("Id", ""),
-                "Product Config Description": json.dumps(root, indent=4 if beautify else None, default=str)
+                "Product Name": node.get("productName", ""),
+                "Id": node.get("Id", ""),
+                "Product Config Description": json.dumps(node, indent=4 if beautify else None, default=str)
             })
             
         out_df = pd.DataFrame(output_rows)

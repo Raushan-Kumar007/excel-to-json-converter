@@ -213,8 +213,8 @@ if uploaded_files:
             if not node.get("children"):
                 continue
                 
-            # Only include Level 1 and Level 2 products
-            if level not in [1, 2]:
+            # Only include Level 2 products
+            if level != 2:
                 continue
                 
             output_rows.append({

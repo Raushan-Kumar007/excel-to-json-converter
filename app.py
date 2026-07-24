@@ -257,10 +257,15 @@ if uploaded_files:
             if level != 2:
                 continue
                 
+            # For Level 2 products (the parent bundle), we don't need quantity and isSelected
+            export_node = node.copy()
+            export_node.pop("quantity", None)
+            export_node.pop("isSelected", None)
+                
             output_rows.append({
                 "Product Name": node.get("productName", ""),
                 "Id": node.get("Id", ""),
-                "Configurator_JSON__c": json.dumps(node, indent=4 if beautify else None, default=str)
+                "Configurator_JSON__c": json.dumps(export_node, indent=4 if beautify else None, default=str)
             })
             
         out_df = pd.DataFrame(output_rows)

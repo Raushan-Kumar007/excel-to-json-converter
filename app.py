@@ -2,6 +2,32 @@ import streamlit as st
 import pandas as pd
 import json
 
+def extract_qty_sel(row_dict, cols):
+    qty_col = next((c for c in cols if 'quant' in str(c).lower() or str(c).lower().strip() == 'qty'), None)
+    issel_col = next((c for c in cols if 'select' in str(c).lower()), None)
+    
+    qty_val = row_dict.get(qty_col) if qty_col else 1
+    try:
+        qty_val = float(qty_val) if qty_val is not None else 1
+        if pd.isna(qty_val):
+            qty_val = 1
+        elif qty_val.is_integer():
+            qty_val = int(qty_val)
+    except:
+        qty_val = 1
+        
+    issel_val = row_dict.get(issel_col) if issel_col else False
+    if pd.isna(issel_val) or issel_val is None:
+        issel_val = False
+    elif isinstance(issel_val, bool):
+        pass
+    elif str(issel_val).strip().lower() in ['true', 'yes', '1', 'y', 'x']:
+        issel_val = True
+    else:
+        issel_val = False
+        
+    return qty_val, issel_val
+
 def parse_level_hierarchy(df, cols, level_cols):
     roots = []
     last_nodes = {}
@@ -29,9 +55,13 @@ def parse_level_hierarchy(df, cols, level_cols):
         else:
             node_id = str(node_id).strip()
                 
+        qty_val, issel_val = extract_qty_sel(row.to_dict(), cols)
+                
         node = {
             "Id": node_id,
             "productName": node_name,
+            "quantity": qty_val,
+            "isSelected": issel_val,
             "children": []
         }
         
@@ -83,13 +113,19 @@ def build_tree(df):
             cid = row[child_id_col]
             cname = row[child_name_col]
             
+            qty_val, issel_val = extract_qty_sel(row.to_dict(), cols)
+            
             # Create parent node if it doesn't exist
             if pid is not None and pid not in nodes:
-                nodes[pid] = {"Id": str(pid), "productName": str(pname) if pname else "", "children": []}
+                nodes[pid] = {"Id": str(pid), "productName": str(pname) if pname else "", "quantity": 1, "isSelected": False, "children": []}
                 
             # Create child node if it doesn't exist
             if cid is not None and cid not in nodes:
-                nodes[cid] = {"Id": str(cid), "productName": str(cname) if cname else "", "children": []}
+                nodes[cid] = {"Id": str(cid), "productName": str(cname) if cname else "", "quantity": qty_val, "isSelected": issel_val, "children": []}
+            elif cid is not None:
+                # Update existing child node with row data
+                nodes[cid]["quantity"] = qty_val
+                nodes[cid]["isSelected"] = issel_val
                 
             # Link child to parent
             if pid is not None and cid is not None:
@@ -118,9 +154,12 @@ def build_tree(df):
         for r in records:
             node_id = r.get(id_col)
             if node_id is not None:
+                qty_val, issel_val = extract_qty_sel(r, cols)
                 nodes[node_id] = {
                     "Id": str(node_id),
                     "productName": str(r.get(name_col)) if r.get(name_col) else "",
+                    "quantity": qty_val,
+                    "isSelected": issel_val,
                     "children": []
                 }
                 
@@ -175,7 +214,8 @@ if uploaded_files:
         combined_df = pd.concat(all_dfs, ignore_index=True)
         
         st.write("### Combined Data Preview")
-        st.dataframe(combined_df, use_container_width=True)
+        # Convert to string to avoid PyArrow mixed-type serialization errors
+        st.dataframe(combined_df.astype(str), width='stretch')
         
         beautify = st.checkbox("Beautify JSON output", value=True)
         
@@ -220,13 +260,13 @@ if uploaded_files:
             output_rows.append({
                 "Product Name": node.get("productName", ""),
                 "Id": node.get("Id", ""),
-                "Product Config Description": json.dumps(node, indent=4 if beautify else None, default=str)
+                "Configurator_JSON__c": json.dumps(node, indent=4 if beautify else None, default=str)
             })
             
         out_df = pd.DataFrame(output_rows)
         
         with st.expander("Click to Preview Generated Excel"):
-            st.dataframe(out_df, use_container_width=True)
+            st.dataframe(out_df, width='stretch')
         
         # Create an in-memory Excel file
         excel_buffer = io.BytesIO()

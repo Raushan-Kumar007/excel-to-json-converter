@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 
-def extract_qty_sel(row_dict, cols):
+def extract_attributes(row_dict, cols):
     qty_col = next((c for c in cols if 'quant' in str(c).lower() or str(c).lower().strip() == 'qty'), None)
     issel_col = next((c for c in cols if 'select' in str(c).lower()), None)
     
@@ -26,7 +26,29 @@ def extract_qty_sel(row_dict, cols):
     else:
         issel_val = False
         
-    return qty_val, issel_val
+    ifs_col = next((c for c in cols if 'ifs' in str(c).lower() and 'part' in str(c).lower()), None)
+    if not ifs_col:
+        ifs_col = next((c for c in cols if 'ifs' in str(c).lower()), None)
+    if not ifs_col:
+        ifs_col = next((c for c in cols if 'part' in str(c).lower() and 'num' in str(c).lower()), None)
+        
+    family_col = next((c for c in cols if 'family' in str(c).lower()), None)
+    
+    raw_ifs = row_dict.get(ifs_col) if ifs_col else ""
+    if pd.isna(raw_ifs) or raw_ifs == "":
+        ifs_val = ""
+    else:
+        if isinstance(raw_ifs, float) and raw_ifs.is_integer():
+            ifs_val = str(int(raw_ifs))
+        else:
+            ifs_val = str(raw_ifs).strip()
+            
+    if ifs_val == 'nan': ifs_val = ""
+    
+    family_val = str(row_dict.get(family_col)).strip() if family_col and pd.notna(row_dict.get(family_col)) else ""
+    if family_val == 'nan': family_val = ""
+        
+    return qty_val, issel_val, ifs_val, family_val
 
 def parse_level_hierarchy(df, cols, level_cols):
     roots = []
@@ -55,13 +77,15 @@ def parse_level_hierarchy(df, cols, level_cols):
         else:
             node_id = str(node_id).strip()
                 
-        qty_val, issel_val = extract_qty_sel(row.to_dict(), cols)
+        qty_val, issel_val, ifs_val, family_val = extract_attributes(row.to_dict(), cols)
                 
         node = {
             "Id": node_id,
             "productName": node_name,
             "quantity": qty_val,
             "isSelected": issel_val,
+            "ifs_part_number": ifs_val,
+            "family": family_val,
             "children": []
         }
         
@@ -113,19 +137,21 @@ def build_tree(df):
             cid = row[child_id_col]
             cname = row[child_name_col]
             
-            qty_val, issel_val = extract_qty_sel(row.to_dict(), cols)
+            qty_val, issel_val, ifs_val, family_val = extract_attributes(row.to_dict(), cols)
             
             # Create parent node if it doesn't exist
             if pid is not None and pid not in nodes:
-                nodes[pid] = {"Id": str(pid), "productName": str(pname) if pname else "", "quantity": 1, "isSelected": False, "children": []}
+                nodes[pid] = {"Id": str(pid), "productName": str(pname) if pname else "", "quantity": 1, "isSelected": False, "ifs_part_number": "", "family": "", "children": []}
                 
             # Create child node if it doesn't exist
             if cid is not None and cid not in nodes:
-                nodes[cid] = {"Id": str(cid), "productName": str(cname) if cname else "", "quantity": qty_val, "isSelected": issel_val, "children": []}
+                nodes[cid] = {"Id": str(cid), "productName": str(cname) if cname else "", "quantity": qty_val, "isSelected": issel_val, "ifs_part_number": ifs_val, "family": family_val, "children": []}
             elif cid is not None:
                 # Update existing child node with row data
                 nodes[cid]["quantity"] = qty_val
                 nodes[cid]["isSelected"] = issel_val
+                nodes[cid]["ifs_part_number"] = ifs_val
+                nodes[cid]["family"] = family_val
                 
             # Link child to parent
             if pid is not None and cid is not None:
@@ -154,12 +180,14 @@ def build_tree(df):
         for r in records:
             node_id = r.get(id_col)
             if node_id is not None:
-                qty_val, issel_val = extract_qty_sel(r, cols)
+                qty_val, issel_val, ifs_val, family_val = extract_attributes(r, cols)
                 nodes[node_id] = {
                     "Id": str(node_id),
                     "productName": str(r.get(name_col)) if r.get(name_col) else "",
                     "quantity": qty_val,
                     "isSelected": issel_val,
+                    "ifs_part_number": ifs_val,
+                    "family": family_val,
                     "children": []
                 }
                 
